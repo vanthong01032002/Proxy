@@ -23,9 +23,10 @@ This project is configured for deployment on Render.com
 3. Connect your GitHub repository
 4. Use the following settings:
    - Build Command: `pip install -r requirements.txt`
-   - Start Command: `gunicorn main:app -c gunicorn_config.py`
+   - Start Command: `gunicorn --worker-class eventlet main:app -b 0.0.0.0:10000`
    - Environment Variables:
-     - `PYTHON_VERSION`: 3.9.0
+     - `PYTHON_VERSION`: 3.9.18
+     - `PORT`: 10000
 
 ## Local Development
 
@@ -39,4 +40,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The server will be available at `http://localhost:8080` 
+The server will be available at `http://localhost:8080`
+
+## Production Deployment
+
+For production deployment, make sure to:
+
+1. Set environment variables:
+   - `FLASK_ENV=production`
+   - `PORT=10000`
+
+2. Use gunicorn with eventlet:
+```bash
+gunicorn --worker-class eventlet main:app -b 0.0.0.0:10000
+``` 

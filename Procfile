@@ -1,1 +1,1 @@
-web: gunicorn --worker-class eventlet main:app
+web: gunicorn --worker-class eventlet main:app -b 0.0.0.0:10000
