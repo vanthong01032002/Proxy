@@ -240,6 +240,48 @@ def update_proxy():
         'message': 'Proxy not found'
     }), 404
 
+@app.route('/api/test_proxy_api')
+@require_api_key
+def test_proxy_api():
+    try:
+        url = f"{PROXY_API_URL}?key={PROXY_API_KEY}"
+        logger.info(f"Testing proxy API URL: {url}")
+        
+        # Test connection
+        start_time = time.time()
+        response = requests.get(url, timeout=10)
+        end_time = time.time()
+        
+        result = {
+            'status': 'success',
+            'response_time': f"{(end_time - start_time):.2f} seconds",
+            'status_code': response.status_code,
+            'headers': dict(response.headers),
+            'content': response.text[:1000]  # Limit content length for readability
+        }
+        
+        try:
+            result['json'] = response.json()
+        except:
+            result['json'] = None
+            
+        return jsonify(result)
+    except requests.exceptions.Timeout:
+        return jsonify({
+            'status': 'error',
+            'message': 'Request timed out after 10 seconds'
+        }), 504
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Request failed: {str(e)}'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Unexpected error: {str(e)}'
+        }), 500
+
 # Initialize the application
 def init_app():
     global proxy_data, proxy_counter
