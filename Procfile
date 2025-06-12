@@ -1,1 +1,1 @@
-web: gunicorn wsgi:application --worker-class eventlet -b 0.0.0.0:$PORT
+web: gunicorn main:app --worker-class eventlet -b 0.0.0.0:$PORT
