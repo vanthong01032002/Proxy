@@ -7,6 +7,12 @@ import re
 from datetime import datetime
 import logging
 import socket
+import os
+from functools import wraps
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -17,9 +23,23 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Get API key from environment variable
+API_KEY = os.getenv('API_KEY')
+if not API_KEY:
+    raise ValueError("API_KEY environment variable is not set")
+
 # Global variable to store proxy data
 proxy_data = []
 proxy_counter = 0  # Counter for generating proxy IDs
+
+def require_api_key(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        api_key = request.headers.get('X-API-Key')
+        if api_key and api_key == API_KEY:
+            return f(*args, **kwargs)
+        return jsonify({"error": "Unauthorized"}), 401
+    return decorated
 
 def generate_proxy_id():
     global proxy_counter
@@ -113,6 +133,7 @@ def cleanup_expired_proxies():
         time.sleep(10)
 
 @app.route('/api/get_proxy')
+@require_api_key
 def get_proxy():
     current_time = int(time.time())
     active_proxies = []
@@ -148,6 +169,7 @@ def get_proxy():
     })
 
 @app.route('/api/update')
+@require_api_key
 def update_proxy():
     proxy = request.args.get('proxy', '')
     status = request.args.get('status', '')
