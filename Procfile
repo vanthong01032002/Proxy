@@ -1,1 +1,1 @@
-web: gunicorn main:app --worker-class eventlet -b 0.0.0.0:$PORT
+web: gunicorn -c gunicorn_config.py wsgi:application

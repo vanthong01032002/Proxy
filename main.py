@@ -206,7 +206,10 @@ def update_proxy():
         'message': 'Proxy not found'
     }), 404
 
-if __name__ == '__main__':
+# Initialize the application
+def init_app():
+    global proxy_data, proxy_counter
+    
     # Load existing proxies from data.txt if exists
     try:
         with open('data.txt', 'r', encoding='utf-8') as f:
@@ -231,30 +234,7 @@ if __name__ == '__main__':
     # Start cleanup thread
     cleanup_thread = threading.Thread(target=cleanup_expired_proxies, daemon=True)
     cleanup_thread.start()
-    
-    # Get network information
-    logger.info("="*50)
-    logger.info("Network Information:")
-    
-    try:
-        # Get all IP addresses
-        hostname = socket.gethostname()
-        ip_list = socket.gethostbyname_ex(hostname)[2]
-        
-        logger.info(f"Hostname: {hostname}")
-        for ip in ip_list:
-            if not ip.startswith('127.'):  # Skip localhost
-                logger.info(f"IP Address: {ip}")
-    except Exception as e:
-        logger.error(f"Error getting network info: {str(e)}")
-    
-    logger.info("="*50)
-    logger.info("Server Access URLs:")
-    logger.info("  - Local:   http://localhost:8080")
-    for ip in ip_list:
-        if not ip.startswith('127.'):  # Skip localhost
-            logger.info(f"  - Network: http://{ip}:8080")
-    logger.info("="*50)
-    
-    # Run Flask app
-    app.run(host='0.0.0.0', port=8080)
+
+# Initialize the application when the module is imported
+init_app()
+
