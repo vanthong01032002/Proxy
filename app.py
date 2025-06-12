@@ -7,12 +7,9 @@ import re
 from datetime import datetime
 import logging
 import socket
+from pymongo import MongoClient
+from bson.objectid import ObjectId
 import os
-from functools import wraps
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -23,26 +20,14 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Get environment variables
-API_KEY = os.getenv('API_KEY')
-if not API_KEY:
-    raise ValueError("API_KEY environment variable is not set")
+# MongoDB connection
+MONGODB_URI = os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/')
+client = MongoClient(MONGODB_URI)
+db = client['proxy_database']
+proxy_collection = db['proxies']
 
-PROXY_API_URL = os.getenv('PROXY_API_URL', 'https://my-proxy-api.glitch.me/get-proxy')
-PROXY_API_KEY = os.getenv('PROXY_API_KEY', 'bXDwsQColKsxhdBkapdbWw')
-
-# Global variable to store proxy data
-proxy_data = []
+# Global variable to store proxy counter
 proxy_counter = 0  # Counter for generating proxy IDs
-
-def require_api_key(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        api_key = request.headers.get('X-API-Key')
-        if api_key and api_key == API_KEY:
-            return f(*args, **kwargs)
-        return jsonify({"error": "Unauthorized"}), 401
-    return decorated
 
 def generate_proxy_id():
     global proxy_counter
@@ -67,9 +52,7 @@ def fetch_proxy():
     while True:
         try:
             logger.info("Fetching new proxy...")
-            url = f"{PROXY_API_URL}?key={PROXY_API_KEY}"
-            logger.info(f"Fetching from URL: {url}")
-            response = requests.get(url, timeout=10)
+            response = requests.get('https://my-proxy-api.glitch.me/get-proxy?key=bXDwsQColKsxhdBkapdbWw')
             logger.info(f"Response status code: {response.status_code}")
             
             if response.status_code == 200:
@@ -82,10 +65,13 @@ def fetch_proxy():
                     expiration_time = int(time.time()) + seconds
                     
                     # Check if proxy already exists
-                    existing_proxy = next((p for p in proxy_data if p['proxyhttp'] == data['proxyhttp']), None)
+                    existing_proxy = proxy_collection.find_one({'proxyhttp': data['proxyhttp']})
                     if existing_proxy:
                         # Update existing proxy
-                        existing_proxy['expiration_time'] = expiration_time
+                        proxy_collection.update_one(
+                            {'_id': existing_proxy['_id']},
+                            {'$set': {'expiration_time': expiration_time}}
+                        )
                         logger.info(f"Updated expiration time for proxy {existing_proxy['id']}")
                     else:
                         # Create new proxy
@@ -98,27 +84,16 @@ def fetch_proxy():
                             'provider': data['Nha Mang'],
                             'status': []
                         }
-                        proxy_data.append(proxy_info)
+                        proxy_collection.insert_one(proxy_info)
                         logger.info(f"Added new proxy: {proxy_info}")
                     
-                    # Save to data.txt
-                    with open('data.txt', 'w', encoding='utf-8') as f:
-                        json.dump(proxy_data, f, ensure_ascii=False, indent=2)
-                    
-                    logger.info(f"Total proxies in memory: {len(proxy_data)}")
+                    logger.info(f"Total proxies in database: {proxy_collection.count_documents({})}")
                 else:
                     logger.warning(f"Invalid status in response: {data.get('status')}")
-                    logger.warning(f"Full response: {data}")
             else:
                 logger.error(f"Failed to fetch proxy. Status code: {response.status_code}")
-                logger.error(f"Response content: {response.text}")
-        except requests.exceptions.Timeout:
-            logger.error("Request timed out")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error: {str(e)}")
         except Exception as e:
             logger.error(f"Error fetching proxy: {str(e)}")
-            logger.exception("Full traceback:")
         
         logger.info("Waiting 60 seconds before next fetch...")
         time.sleep(60)
@@ -128,16 +103,10 @@ def cleanup_expired_proxies():
     while True:
         try:
             current_time = int(time.time())
-            global proxy_data
-            initial_count = len(proxy_data)
-            proxy_data = [proxy for proxy in proxy_data if proxy['expiration_time'] > current_time]
+            result = proxy_collection.delete_many({'expiration_time': {'$lt': current_time}})
             
-            if len(proxy_data) != initial_count:
-                logger.info(f"Removed {initial_count - len(proxy_data)} expired proxies")
-            
-            # Update data.txt
-            with open('data.txt', 'w', encoding='utf-8') as f:
-                json.dump(proxy_data, f, ensure_ascii=False, indent=2)
+            if result.deleted_count > 0:
+                logger.info(f"Removed {result.deleted_count} expired proxies")
             
         except Exception as e:
             logger.error(f"Error in cleanup: {str(e)}")
@@ -145,34 +114,31 @@ def cleanup_expired_proxies():
         time.sleep(10)
 
 @app.route('/api/get_proxy')
-@require_api_key
 def get_proxy():
     current_time = int(time.time())
     active_proxies = []
     
-    logger.info(f"Current proxy count: {len(proxy_data)}")
+    logger.info(f"Current proxy count: {proxy_collection.count_documents({})}")
     
-    for proxy in proxy_data:
-        if proxy['expiration_time'] > current_time:
-            # Generate ID if not exists
-            if 'id' not in proxy:
-                proxy['id'] = generate_proxy_id()
-                logger.info(f"Generated new ID {proxy['id']} for proxy {proxy['proxyhttp']}")
-            
-            remaining_seconds = proxy['expiration_time'] - current_time
-            active_proxies.append({
-                'id': proxy['id'],
-                'proxy': proxy['proxyhttp'],
-                'time': format_time(remaining_seconds),
-                'location': proxy['location'],
-                'provider': proxy['provider'],
-                'status': proxy.get('status', [])
-            })
-    
-    # Save updated data with IDs
-    if active_proxies:
-        with open('data.txt', 'w', encoding='utf-8') as f:
-            json.dump(proxy_data, f, ensure_ascii=False, indent=2)
+    for proxy in proxy_collection.find({'expiration_time': {'$gt': current_time}}):
+        # Generate ID if not exists
+        if 'id' not in proxy:
+            proxy['id'] = generate_proxy_id()
+            proxy_collection.update_one(
+                {'_id': proxy['_id']},
+                {'$set': {'id': proxy['id']}}
+            )
+            logger.info(f"Generated new ID {proxy['id']} for proxy {proxy['proxyhttp']}")
+        
+        remaining_seconds = proxy['expiration_time'] - current_time
+        active_proxies.append({
+            'id': proxy['id'],
+            'proxy': proxy['proxyhttp'],
+            'time': format_time(remaining_seconds),
+            'location': proxy['location'],
+            'provider': proxy['provider'],
+            'status': proxy.get('status', [])
+        })
     
     logger.info(f"Returning {len(active_proxies)} active proxies")
     return jsonify({
@@ -181,7 +147,6 @@ def get_proxy():
     })
 
 @app.route('/api/update')
-@require_api_key
 def update_proxy():
     proxy = request.args.get('proxy', '')
     status = request.args.get('status', '')
@@ -196,22 +161,13 @@ def update_proxy():
         }), 400
     
     logger.info(f"Looking for proxy: {proxy}")
-    logger.info(f"Current proxy data: {proxy_data}")
     
-    # Find the proxy in our data
+    # Find the proxy in our database
     target_proxy = None
-    for p in proxy_data:
-        # Check if proxy parameter is an ID or proxy address
-        if proxy.startswith('PRX'):
-            if p.get('id') == proxy:  # Use get() to safely check for id
-                target_proxy = p
-                logger.info(f"Found proxy by ID: {proxy}")
-                break
-        else:
-            if p.get('proxyhttp') == proxy:
-                target_proxy = p
-                logger.info(f"Found proxy by address: {proxy}")
-                break
+    if proxy.startswith('PRX'):
+        target_proxy = proxy_collection.find_one({'id': proxy})
+    else:
+        target_proxy = proxy_collection.find_one({'proxyhttp': proxy})
     
     if target_proxy:
         if status:
@@ -221,10 +177,11 @@ def update_proxy():
                 
             # Update status if provided
             if status not in target_proxy['status']:
+                proxy_collection.update_one(
+                    {'_id': target_proxy['_id']},
+                    {'$push': {'status': status}}
+                )
                 target_proxy['status'].append(status)
-            # Save to data.txt
-            with open('data.txt', 'w', encoding='utf-8') as f:
-                json.dump(proxy_data, f, ensure_ascii=False, indent=2)
             logger.info(f"Updated status for proxy {target_proxy.get('id', 'NO_ID')}: {target_proxy['status']}")
         
         return jsonify({
@@ -240,67 +197,18 @@ def update_proxy():
         'message': 'Proxy not found'
     }), 404
 
-@app.route('/api/test_proxy_api')
-@require_api_key
-def test_proxy_api():
-    try:
-        url = f"{PROXY_API_URL}?key={PROXY_API_KEY}"
-        logger.info(f"Testing proxy API URL: {url}")
-        
-        # Test connection
-        start_time = time.time()
-        response = requests.get(url, timeout=10)
-        end_time = time.time()
-        
-        result = {
-            'status': 'success',
-            'response_time': f"{(end_time - start_time):.2f} seconds",
-            'status_code': response.status_code,
-            'headers': dict(response.headers),
-            'content': response.text[:1000]  # Limit content length for readability
-        }
-        
-        try:
-            result['json'] = response.json()
-        except:
-            result['json'] = None
-            
-        return jsonify(result)
-    except requests.exceptions.Timeout:
-        return jsonify({
-            'status': 'error',
-            'message': 'Request timed out after 10 seconds'
-        }), 504
-    except requests.exceptions.RequestException as e:
-        return jsonify({
-            'status': 'error',
-            'message': f'Request failed: {str(e)}'
-        }), 500
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': f'Unexpected error: {str(e)}'
-        }), 500
-
 # Initialize the application
 def init_app():
-    global proxy_data, proxy_counter
+    global proxy_counter
     
-    # Load existing proxies from data.txt if exists
+    # Set proxy counter based on existing data
     try:
-        with open('data.txt', 'r', encoding='utf-8') as f:
-            proxy_data = json.load(f)
-            # Set proxy counter based on existing data
-            if proxy_data:
-                try:
-                    max_id = max(int(p['id'][3:]) for p in proxy_data if 'id' in p)
-                    proxy_counter = max_id
-                except ValueError:
-                    # If no valid IDs found, start from 0
-                    proxy_counter = 0
-            logger.info(f"Loaded {len(proxy_data)} existing proxies from data.txt")
-    except FileNotFoundError:
-        logger.info("No existing data.txt found. Starting fresh.")
+        max_proxy = proxy_collection.find_one(sort=[('id', -1)])
+        if max_proxy and 'id' in max_proxy:
+            proxy_counter = int(max_proxy['id'][3:])
+        logger.info(f"Loaded existing proxies from database. Current counter: {proxy_counter}")
+    except Exception as e:
+        logger.error(f"Error loading proxy counter: {str(e)}")
         proxy_counter = 0
     
     # Start proxy fetching thread
