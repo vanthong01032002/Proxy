@@ -23,10 +23,13 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Get API key from environment variable
+# Get environment variables
 API_KEY = os.getenv('API_KEY')
 if not API_KEY:
     raise ValueError("API_KEY environment variable is not set")
+
+PROXY_API_URL = os.getenv('PROXY_API_URL', 'https://my-proxy-api.glitch.me/get-proxy')
+PROXY_API_KEY = os.getenv('PROXY_API_KEY', 'bXDwsQColKsxhdBkapdbWw')
 
 # Global variable to store proxy data
 proxy_data = []
@@ -64,7 +67,9 @@ def fetch_proxy():
     while True:
         try:
             logger.info("Fetching new proxy...")
-            response = requests.get('https://my-proxy-api.glitch.me/get-proxy?key=bXDwsQColKsxhdBkapdbWw')
+            url = f"{PROXY_API_URL}?key={PROXY_API_KEY}"
+            logger.info(f"Fetching from URL: {url}")
+            response = requests.get(url, timeout=10)
             logger.info(f"Response status code: {response.status_code}")
             
             if response.status_code == 200:
@@ -103,10 +108,17 @@ def fetch_proxy():
                     logger.info(f"Total proxies in memory: {len(proxy_data)}")
                 else:
                     logger.warning(f"Invalid status in response: {data.get('status')}")
+                    logger.warning(f"Full response: {data}")
             else:
                 logger.error(f"Failed to fetch proxy. Status code: {response.status_code}")
+                logger.error(f"Response content: {response.text}")
+        except requests.exceptions.Timeout:
+            logger.error("Request timed out")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error: {str(e)}")
         except Exception as e:
             logger.error(f"Error fetching proxy: {str(e)}")
+            logger.exception("Full traceback:")
         
         logger.info("Waiting 60 seconds before next fetch...")
         time.sleep(60)
